@@ -81,7 +81,7 @@ func (e *imageExporter) Resolve(ctx context.Context, opt map[string]string) (exp
 		buildInfo:        true,
 	}
 
-	var esgz bool
+	var esgz, nydus bool
 	for k, v := range opt {
 		switch k {
 		case keyImageName:
@@ -155,6 +155,9 @@ func (e *imageExporter) Resolve(ctx context.Context, opt map[string]string) (exp
 			case "estargz":
 				i.layerCompression = compression.EStargz
 				esgz = true
+			case "nydus":
+				i.layerCompression = compression.NydusBlob
+				nydus = true
 			case "zstd":
 				i.layerCompression = compression.Zstd
 			case "uncompressed":
@@ -212,8 +215,8 @@ func (e *imageExporter) Resolve(ctx context.Context, opt map[string]string) (exp
 			i.meta[k] = []byte(v)
 		}
 	}
-	if esgz && !i.ociTypes {
-		logrus.Warn("forcibly turning on oci-mediatype mode for estargz")
+	if (esgz || nydus) && !i.ociTypes {
+		logrus.Warnf("forcibly turning on oci-mediatype mode for %s", i.layerCompression)
 		i.ociTypes = true
 	}
 	return i, nil

@@ -33,6 +33,7 @@ import (
 	"github.com/containerd/containerd/snapshots/native"
 	"github.com/containerd/continuity/fs/fstest"
 	"github.com/containerd/stargz-snapshotter/estargz"
+	nydusUtils "github.com/goharbor/acceleration-service/pkg/driver/nydus/utils"
 	"github.com/klauspost/compress/zstd"
 	"github.com/moby/buildkit/cache/config"
 	"github.com/moby/buildkit/cache/metadata"
@@ -687,6 +688,332 @@ func TestExtractOnMutable(t *testing.T) {
 	require.Equal(t, 0, len(dirs))
 
 	checkNumBlobs(ctx, t, co.cs, 0)
+}
+
+func TestLinkOtherBlobToNydus(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Depends on unimplemented nydus support on Windows")
+	}
+
+	t.Parallel()
+	ctx := namespaces.WithNamespace(context.Background(), "buildkit-test")
+
+	tmpdir, err := ioutil.TempDir("", "cachemanager")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpdir)
+
+	snapshotter, err := native.NewSnapshotter(filepath.Join(tmpdir, "snapshots"))
+	require.NoError(t, err)
+
+	co, cleanup, err := newCacheManager(ctx, cmOpt{
+		snapshotter:     snapshotter,
+		snapshotterName: "native",
+	})
+	require.NoError(t, err)
+
+	defer cleanup()
+
+	ctx, done, err := leaseutil.WithLease(ctx, co.lm, leaseutil.MakeTemporary)
+	require.NoError(t, err)
+	defer done(context.TODO())
+
+	cm := co.manager
+
+	ctx, clean, err := leaseutil.WithLease(ctx, co.lm)
+	require.NoError(t, err)
+	defer clean(context.TODO())
+
+	// Create ref 1
+	active, err := cm.New(ctx, nil, nil)
+	require.NoError(t, err)
+	snap, err := active.Commit(ctx)
+	require.NoError(t, err)
+	snapRef1 := snap.(*immutableRef)
+
+	// Add nydus bootstrap compression 1 to ref 1
+	b, bootstrapDesc1, err := mapToNydusArtifact("nydus-bootstrap-1", compression.NydusBootstrap)
+	require.NoError(t, err)
+	err = content.WriteBlob(ctx, co.cs, "ref-nydus-bootstrap-1", bytes.NewBuffer(b), bootstrapDesc1)
+	require.NoError(t, err)
+	err = snapRef1.SetString(keyCachedNydusBootstrap, bootstrapDesc1.Digest.String(), "")
+	require.NoError(t, err)
+	err = snapRef1.setBlob(ctx, bootstrapDesc1)
+	require.NoError(t, err)
+	err = snapRef1.linkBlob(ctx, bootstrapDesc1)
+	require.NoError(t, err)
+
+	// Add nydus blob compression 1 to ref 1
+	b, blobDesc1, err := mapToNydusArtifact("nydus-blob-1", compression.NydusBlob)
+	require.NoError(t, err)
+	err = content.WriteBlob(ctx, co.cs, "ref-nydus-blob-1", bytes.NewBuffer(b), blobDesc1)
+	require.NoError(t, err)
+	err = snapRef1.SetString(keyCachedNydusBlob, blobDesc1.Digest.String(), "")
+	require.NoError(t, err)
+	err = snapRef1.linkBlob(ctx, blobDesc1)
+	require.NoError(t, err)
+
+	// Create ref 2
+	active, err = cm.New(ctx, nil, nil)
+	require.NoError(t, err)
+	snap, err = active.Commit(ctx)
+	require.NoError(t, err)
+	snapRef2 := snap.(*immutableRef)
+
+	// Add nydus bootstrap compression 2 to ref 2
+	b, bootstrapDesc2, err := mapToNydusArtifact("nydus-bootstrap-2", compression.NydusBootstrap)
+	require.NoError(t, err)
+	err = content.WriteBlob(ctx, co.cs, "ref-nydus-bootstrap-2", bytes.NewBuffer(b), bootstrapDesc2)
+	require.NoError(t, err)
+	err = snapRef2.SetString(keyCachedNydusBootstrap, bootstrapDesc2.Digest.String(), "")
+	require.NoError(t, err)
+	err = snapRef2.setBlob(ctx, bootstrapDesc2)
+	require.NoError(t, err)
+	err = snapRef2.linkBlob(ctx, bootstrapDesc2)
+	require.NoError(t, err)
+
+	// Create ref 3
+	active, err = cm.New(ctx, nil, nil)
+	require.NoError(t, err)
+	snap, err = active.Commit(ctx)
+	require.NoError(t, err)
+	snapRef3 := snap.(*immutableRef)
+
+	// Add nydus bootstrap compression 3 to ref 3
+	b, bootstrapDesc3, err := mapToNydusArtifact("nydus-bootstrap-3", compression.NydusBootstrap)
+	require.NoError(t, err)
+	err = content.WriteBlob(ctx, co.cs, "ref-nydus-bootstrap-3", bytes.NewBuffer(b), bootstrapDesc3)
+	require.NoError(t, err)
+	err = snapRef3.SetString(keyCachedNydusBootstrap, bootstrapDesc3.Digest.String(), "")
+	require.NoError(t, err)
+	err = snapRef3.setBlob(ctx, bootstrapDesc3)
+	require.NoError(t, err)
+	err = snapRef3.linkBlob(ctx, bootstrapDesc3)
+	require.NoError(t, err)
+
+	// Add nydus blob compression 3 to ref 3
+	b, blobDesc3, err := mapToNydusArtifact("nydus-blob-3", compression.NydusBlob)
+	require.NoError(t, err)
+	err = content.WriteBlob(ctx, co.cs, "ref-nydus-blob-3", bytes.NewBuffer(b), blobDesc3)
+	require.NoError(t, err)
+	err = snapRef3.SetString(keyCachedNydusBlob, blobDesc3.Digest.String(), "")
+	require.NoError(t, err)
+	err = snapRef3.linkBlob(ctx, blobDesc3)
+	require.NoError(t, err)
+
+	// Get nydus bootstrap compression 1 from ref 1
+	actualDesc, err := snapRef1.getBlobWithCompression(ctx, compression.NydusBootstrap)
+	require.NoError(t, err)
+	require.Equal(t, bootstrapDesc1.Digest, actualDesc.Digest)
+
+	// Get nydus blob compression from ref 1
+	actualDesc, err = snapRef1.getBlobWithCompression(ctx, compression.NydusBlob)
+	require.NoError(t, err)
+	require.Equal(t, blobDesc1.Digest, actualDesc.Digest)
+
+	// Get nydus bootstrap compression 2 from ref 2
+	actualDesc, err = snapRef2.getBlobWithCompression(ctx, compression.NydusBootstrap)
+	require.NoError(t, err)
+	require.Equal(t, bootstrapDesc2.Digest, actualDesc.Digest)
+
+	// Get nydus blob compression from ref 2
+	_, err = snapRef2.getBlobWithCompression(ctx, compression.NydusBlob)
+	require.Equal(t, errdefs.ErrNotFound, err)
+
+	// Get nydus bootstrap compression 3 from ref 3
+	actualDesc, err = snapRef3.getBlobWithCompression(ctx, compression.NydusBootstrap)
+	require.NoError(t, err)
+	require.Equal(t, bootstrapDesc3.Digest, actualDesc.Digest)
+
+	// Get nydus blob compression 3 from ref 3
+	actualDesc, err = snapRef3.getBlobWithCompression(ctx, compression.NydusBlob)
+	require.NoError(t, err)
+	require.Equal(t, blobDesc3.Digest, actualDesc.Digest)
+
+	// Create ref 4
+	active, err = cm.New(ctx, nil, nil)
+	require.NoError(t, err)
+	snap, err = active.Commit(ctx)
+	require.NoError(t, err)
+	snapRef4 := snap.(*immutableRef)
+
+	// Add nydus bootstrap compression 2 to ref 4
+	err = snapRef4.SetString(keyCachedNydusBootstrap, bootstrapDesc2.Digest.String(), "")
+	require.NoError(t, err)
+	err = snapRef4.setBlob(ctx, bootstrapDesc2)
+	require.NoError(t, err)
+
+	// Add gzip compression 1 to ref 2
+	b, gzipDesc1, err := mapToBlob(map[string]string{"gzip1": "true"}, true)
+	require.NoError(t, err)
+	err = content.WriteBlob(ctx, co.cs, "ref-gzip-1", bytes.NewBuffer(b), gzipDesc1)
+	require.NoError(t, err)
+	err = snapRef2.setBlob(ctx, gzipDesc1)
+	require.NoError(t, err)
+
+	// Add uncompressed 1 to ref 2
+	b, uncompressedDesc1, err := mapToBlobWithCompression(map[string]string{"uncompressed1": "true"}, nil)
+	require.NoError(t, err)
+	err = content.WriteBlob(ctx, co.cs, "ref-uncompressed-1", bytes.NewBuffer(b), uncompressedDesc1)
+	require.NoError(t, err)
+	err = snapRef2.setBlob(ctx, uncompressedDesc1)
+	require.NoError(t, err)
+
+	// Add gzip compression 2 to ref 4
+	b, gzipDesc2, err := mapToBlob(map[string]string{"gzip2": "true"}, true)
+	require.NoError(t, err)
+	err = content.WriteBlob(ctx, co.cs, "ref-gzip-2", bytes.NewBuffer(b), gzipDesc2)
+	require.NoError(t, err)
+	err = snapRef4.setBlob(ctx, gzipDesc2)
+	require.NoError(t, err)
+
+	// Add uncompressed 2 to ref 4
+	b, uncompressedDesc2, err := mapToBlobWithCompression(map[string]string{"uncompressed2": "true"}, nil)
+	require.NoError(t, err)
+	err = content.WriteBlob(ctx, co.cs, "ref-uncompressed-2", bytes.NewBuffer(b), uncompressedDesc2)
+	require.NoError(t, err)
+	err = snapRef4.setBlob(ctx, uncompressedDesc2)
+	require.NoError(t, err)
+
+	// Get gzip compression 1 from ref 2
+	actualDesc, err = snapRef2.getBlobWithCompression(ctx, compression.Gzip)
+	require.NoError(t, err)
+	require.Equal(t, gzipDesc1.Digest, actualDesc.Digest)
+
+	// Get gzip compression 2 from ref 4
+	actualDesc, err = snapRef4.getBlobWithCompression(ctx, compression.Gzip)
+	require.NoError(t, err)
+	require.Equal(t, gzipDesc2.Digest, actualDesc.Digest)
+
+	// Get uncompressed 1 from ref 2
+	actualDesc, err = snapRef2.getBlobWithCompression(ctx, compression.Uncompressed)
+	require.NoError(t, err)
+	require.Equal(t, uncompressedDesc1.Digest, actualDesc.Digest)
+
+	// Get uncompressed 2 from ref 4
+	actualDesc, err = snapRef4.getBlobWithCompression(ctx, compression.Uncompressed)
+	require.NoError(t, err)
+	require.Equal(t, uncompressedDesc2.Digest, actualDesc.Digest)
+}
+
+func TestLinkNydusBlobToOther(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Depends on unimplemented nydus support on Windows")
+	}
+
+	t.Parallel()
+	ctx := namespaces.WithNamespace(context.Background(), "buildkit-test")
+
+	tmpdir, err := ioutil.TempDir("", "cachemanager")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpdir)
+
+	snapshotter, err := native.NewSnapshotter(filepath.Join(tmpdir, "snapshots"))
+	require.NoError(t, err)
+
+	co, cleanup, err := newCacheManager(ctx, cmOpt{
+		snapshotter:     snapshotter,
+		snapshotterName: "native",
+	})
+	require.NoError(t, err)
+
+	defer cleanup()
+
+	ctx, done, err := leaseutil.WithLease(ctx, co.lm, leaseutil.MakeTemporary)
+	require.NoError(t, err)
+	defer done(context.TODO())
+
+	cm := co.manager
+
+	ctx, clean, err := leaseutil.WithLease(ctx, co.lm)
+	require.NoError(t, err)
+	defer clean(context.TODO())
+
+	// Create ref 1
+	active, err := cm.New(ctx, nil, nil)
+	require.NoError(t, err)
+	snap, err := active.Commit(ctx)
+	require.NoError(t, err)
+	snapRef1 := snap.(*immutableRef)
+
+	// Add gzip compression 1 to ref 1
+	b, gzipDesc1, err := mapToBlob(map[string]string{"gzip1": "true"}, true)
+	require.NoError(t, err)
+	err = content.WriteBlob(ctx, co.cs, "ref-gzip-1", bytes.NewBuffer(b), gzipDesc1)
+	require.NoError(t, err)
+	err = snapRef1.setBlob(ctx, gzipDesc1)
+	require.NoError(t, err)
+
+	// Add nydus bootstrap compression 1 to ref 1
+	b, bootstrapDesc1, err := mapToNydusArtifact("nydus-bootstrap-1", compression.NydusBootstrap)
+	require.NoError(t, err)
+	err = content.WriteBlob(ctx, co.cs, "ref-nydus-bootstrap-1", bytes.NewBuffer(b), bootstrapDesc1)
+	require.NoError(t, err)
+	err = snapRef1.SetString(keyCachedNydusBootstrap, bootstrapDesc1.Digest.String(), "")
+	require.NoError(t, err)
+	err = snapRef1.linkBlob(ctx, bootstrapDesc1)
+	require.NoError(t, err)
+
+	// Add nydus blob compression 1 to ref 1
+	b, blobDesc1, err := mapToNydusArtifact("nydus-blob-1", compression.NydusBlob)
+	require.NoError(t, err)
+	err = content.WriteBlob(ctx, co.cs, "ref-nydus-blob-1", bytes.NewBuffer(b), blobDesc1)
+	require.NoError(t, err)
+	err = snapRef1.SetString(keyCachedNydusBlob, blobDesc1.Digest.String(), "")
+	require.NoError(t, err)
+	err = snapRef1.linkBlob(ctx, blobDesc1)
+	require.NoError(t, err)
+
+	// Get nydus bootstrap compression 1 from ref 1
+	actualDesc, err := snapRef1.getBlobWithCompression(ctx, compression.NydusBootstrap)
+	require.NoError(t, err)
+	require.Equal(t, bootstrapDesc1, actualDesc)
+
+	// Get nydus blob compression 1 from ref 1
+	actualDesc, err = snapRef1.getBlobWithCompression(ctx, compression.NydusBlob)
+	require.NoError(t, err)
+	require.Equal(t, blobDesc1, actualDesc)
+
+	// Create ref 2
+	active, err = cm.New(ctx, nil, nil)
+	require.NoError(t, err)
+	snap, err = active.Commit(ctx)
+	require.NoError(t, err)
+	snapRef2 := snap.(*immutableRef)
+
+	// Add gzip compression 1 to ref 2
+	err = snapRef2.setBlob(ctx, gzipDesc1)
+	require.NoError(t, err)
+	require.Equal(t, gzipDesc1, gzipDesc1)
+
+	// Add nydus bootstrap compression 2 to ref 2
+	b, bootstrapDesc2, err := mapToNydusArtifact("nydus-bootstrap-2", compression.NydusBootstrap)
+	require.NoError(t, err)
+	err = content.WriteBlob(ctx, co.cs, "ref-nydus-bootstrap-2", bytes.NewBuffer(b), bootstrapDesc2)
+	require.NoError(t, err)
+	err = snapRef2.SetString(keyCachedNydusBootstrap, bootstrapDesc2.Digest.String(), "")
+	require.NoError(t, err)
+	err = snapRef2.linkBlob(ctx, bootstrapDesc2)
+	require.NoError(t, err)
+
+	// Get nydus bootstrap compression 2 from ref 2
+	actualDesc, err = snapRef2.getBlobWithCompression(ctx, compression.NydusBootstrap)
+	require.NoError(t, err)
+	require.Equal(t, bootstrapDesc2, actualDesc)
+
+	// Get nydus bootstrap compression 1 from ref 1
+	actualDesc, err = snapRef1.getBlobWithCompression(ctx, compression.NydusBootstrap)
+	require.NoError(t, err)
+	require.Equal(t, bootstrapDesc1, actualDesc)
+
+	// Get gzip compression 1 from ref 1
+	actualDesc, err = snapRef1.getBlobWithCompression(ctx, compression.Gzip)
+	require.NoError(t, err)
+	require.Equal(t, gzipDesc1.Digest, actualDesc.Digest)
+
+	// Get gzip compression 1 from ref 2
+	actualDesc, err = snapRef1.getBlobWithCompression(ctx, compression.Gzip)
+	require.NoError(t, err)
+	require.Equal(t, gzipDesc1.Digest, actualDesc.Digest)
 }
 
 func TestSetBlob(t *testing.T) {
@@ -1428,12 +1755,13 @@ func testSharingCompressionVariant(ctx context.Context, t *testing.T, co *cmOut,
 		}
 
 		// check if contents are valid
+		sg := session.NewGroup("")
 		for _, c := range allCompressions {
 			bDesc, err := bRef.(*immutableRef).getBlobWithCompression(ctx, c)
 			require.NoError(t, err, "compression: %v", c)
 			uDgst := bDesc.Digest
 			if c != compression.Uncompressed {
-				convertFunc, err := getConverter(ctx, co.cs, bDesc, compression.New(compression.Uncompressed))
+				convertFunc, err := getConverter(ctx, bRef.(*immutableRef), bDesc, compression.New(compression.Uncompressed), sg)
 				require.NoError(t, err, "compression: %v", c)
 				uDesc, err := convertFunc(ctx, co.cs, bDesc)
 				require.NoError(t, err, "compression: %v", c)
@@ -1568,9 +1896,14 @@ func TestConversion(t *testing.T) {
 				compDest := compression.New(j)
 				eg.Go(func() error {
 					testName := fmt.Sprintf("%s=>%s", i, j)
+					sg := session.NewGroup("")
+
+					_ref, err := co.manager.GetByBlob(ctx, orgDesc, nil)
+					require.NoError(t, err, testName)
+					ref := _ref.(*immutableRef)
 
 					// Prepare the source compression type
-					convertFunc, err := getConverter(egctx, store, orgDesc, compSrc)
+					convertFunc, err := getConverter(egctx, ref, orgDesc, compSrc, sg)
 					require.NoError(t, err, testName)
 					srcDesc := &orgDesc
 					if convertFunc != nil {
@@ -1578,8 +1911,12 @@ func TestConversion(t *testing.T) {
 						require.NoError(t, err, testName)
 					}
 
+					_ref, err = co.manager.GetByBlob(ctx, *srcDesc, nil)
+					require.NoError(t, err, testName)
+					ref = _ref.(*immutableRef)
+
 					// Convert the blob
-					convertFunc, err = getConverter(egctx, store, *srcDesc, compDest)
+					convertFunc, err = getConverter(egctx, ref, *srcDesc, compDest, sg)
 					require.NoError(t, err, testName)
 					resDesc := srcDesc
 					if convertFunc != nil {
@@ -1587,8 +1924,12 @@ func TestConversion(t *testing.T) {
 						require.NoError(t, err, testName)
 					}
 
+					_ref, err = co.manager.GetByBlob(ctx, *resDesc, nil)
+					require.NoError(t, err, testName)
+					ref = _ref.(*immutableRef)
+
 					// Check the uncompressed digest is the same as the original
-					convertFunc, err = getConverter(egctx, store, *resDesc, compression.New(compression.Uncompressed))
+					convertFunc, err = getConverter(egctx, ref, *resDesc, compression.New(compression.Uncompressed), sg)
 					require.NoError(t, err, testName)
 					recreatedDesc := resDesc
 					if convertFunc != nil {
@@ -2475,6 +2816,24 @@ type bufferCloser struct {
 
 func (b bufferCloser) Close() error {
 	return nil
+}
+
+func mapToNydusArtifact(data string, compressionType compression.Type) ([]byte, ocispecs.Descriptor, error) {
+	dataBytes := []byte(data)
+	annotations := map[string]string{
+		"containerd.io/uncompressed": digest.FromBytes(dataBytes).String(),
+	}
+	if compressionType == compression.NydusBootstrap {
+		annotations[nydusUtils.LayerAnnotationNydusBootstrap] = "true"
+	} else {
+		annotations[nydusUtils.LayerAnnotationNydusBlob] = "true"
+	}
+	return dataBytes, ocispecs.Descriptor{
+		Digest:      digest.FromBytes(dataBytes),
+		MediaType:   compressionType.DefaultMediaType(),
+		Size:        int64(len(dataBytes)),
+		Annotations: annotations,
+	}, nil
 }
 
 func mapToBlob(m map[string]string, compress bool) ([]byte, ocispecs.Descriptor, error) {

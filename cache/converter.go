@@ -14,6 +14,7 @@ import (
 	"github.com/containerd/containerd/images/converter"
 	"github.com/containerd/containerd/labels"
 	"github.com/moby/buildkit/identity"
+	"github.com/moby/buildkit/session"
 	"github.com/moby/buildkit/util/bklog"
 	"github.com/moby/buildkit/util/compression"
 	digest "github.com/opencontainers/go-digest"
@@ -35,7 +36,7 @@ func needsConversion(ctx context.Context, cs content.Store, desc ocispecs.Descri
 		if err != nil {
 			return false, err
 		}
-		if (!images.IsLayerType(mediaType) || compression.FromMediaType(mediaType) == compression.Gzip) && !esgz {
+		if (!images.IsLayerType(mediaType) || compression.FromMediaType(mediaType) == compression.Gzip) && !esgz && !compression.IsNydusBootstrap(desc) {
 			return false, nil
 		}
 	case compression.Zstd:
@@ -50,15 +51,44 @@ func needsConversion(ctx context.Context, cs content.Store, desc ocispecs.Descri
 		if !images.IsLayerType(mediaType) || esgz {
 			return false, nil
 		}
+	case compression.NydusBlob:
+		if !images.IsLayerType(mediaType) || compression.IsNydusBlob(desc) {
+			return false, nil
+		}
+	case compression.NydusBootstrap:
+		if !images.IsLayerType(mediaType) || compression.IsNydusBootstrap(desc) {
+			return false, nil
+		}
 	default:
 		return false, fmt.Errorf("unknown compression type during conversion: %q", compressionType)
 	}
 	return true, nil
 }
 
+// Some compression type can't be mixed with other compression types in the same image,
+// so if `source` is this kind of layer, but the target is other compression type, we
+// should do the forced compression.
+func needsForceCompression(source ocispecs.Descriptor, target compression.Type) bool {
+	if target == compression.NydusBlob {
+		return !compression.IsNydusBlob(source)
+	} else if target == compression.NydusBootstrap {
+		return !compression.IsNydusBootstrap(source)
+	} else {
+		return compression.IsNydusBootstrap(source) || compression.IsNydusBlob(source)
+	}
+}
+
 // getConverter returns converter function according to the specified compression type.
 // If no conversion is needed, this returns nil without error.
-func getConverter(ctx context.Context, cs content.Store, desc ocispecs.Descriptor, comp compression.Config) (converter.ConvertFunc, error) {
+func getConverter(ctx context.Context, ref *immutableRef, desc ocispecs.Descriptor, comp compression.Config, s session.Group) (converter.ConvertFunc, error) {
+	cs := ref.cm.ContentStore
+
+	if needsForceCompression(desc, comp.Type) {
+		return func(ctx context.Context, cs content.Store, desc ocispecs.Descriptor) (*ocispecs.Descriptor, error) {
+			return doCompression(ctx, ref, comp, s)
+		}, nil
+	}
+
 	if needs, err := needsConversion(ctx, cs, desc, comp.Type); err != nil {
 		return nil, errors.Wrapf(err, "failed to determine conversion needs")
 	} else if !needs {

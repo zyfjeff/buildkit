@@ -17,6 +17,7 @@ import (
 	"github.com/containerd/containerd/mount"
 	"github.com/containerd/containerd/snapshots"
 	"github.com/docker/docker/pkg/idtools"
+	nydusUtils "github.com/goharbor/acceleration-service/pkg/driver/nydus/utils"
 	"github.com/hashicorp/go-multierror"
 	"github.com/moby/buildkit/cache/config"
 	"github.com/moby/buildkit/identity"
@@ -465,6 +466,13 @@ type immutableRef struct {
 	progress progress.Controller
 }
 
+func (sr *immutableRef) recordForceCompressionIfNeeds(source ocispecs.Descriptor, target ocispecs.Descriptor) {
+	compressionType := compression.FromDesc(target)
+	if compression.IsNydusBootstrap(source) && !(compression.IsNydusBootstrap(target) || compression.IsNydusBlob(target)) {
+		sr.SetString(fmt.Sprintf("%s.%s", keyForceCompressionBlob, compressionType), target.Digest.String(), "")
+	}
+}
+
 // Order is from parent->child, sr will be at end of slice. Refs should not
 // be released as they are used internally in the underlying cacheRecords.
 func (sr *immutableRef) layerChain() []*immutableRef {
@@ -731,8 +739,12 @@ func (sr *immutableRef) linkBlob(ctx context.Context, desc ocispecs.Descriptor) 
 	if err != nil {
 		return err
 	}
+	blobDesc, err := sr.ociDesc(ctx, sr.descHandlers, true)
+	if err != nil {
+		return err
+	}
 	vInfo.Labels = map[string]string{
-		blobVariantGCLabel + blobDigest.String(): blobDigest.String(),
+		blobVariantGCLabel + blobDesc.Digest.String(): blobDigest.String(),
 	}
 	vInfo = addBlobDescToInfo(desc, vInfo)
 	if _, err := cs.Update(ctx, vInfo, fieldsFromLabels(vInfo.Labels)...); err != nil {
@@ -749,6 +761,7 @@ func (sr *immutableRef) linkBlob(ctx context.Context, desc ocispecs.Descriptor) 
 	if desc.Digest == blobDigest {
 		return nil
 	}
+	sr.recordForceCompressionIfNeeds(blobDesc, desc)
 	info.Labels = map[string]string{
 		blobVariantGCLabel + desc.Digest.String(): desc.Digest.String(),
 	}
@@ -764,15 +777,46 @@ func (sr *immutableRef) getBlobWithCompression(ctx context.Context, compressionT
 	if err != nil {
 		return ocispecs.Descriptor{}, err
 	}
-	return getBlobWithCompression(ctx, sr.cm.ContentStore, desc, compressionType)
+	return sr.getBlobWithCompressionWithDesc(ctx, sr.cm.ContentStore, desc, compressionType)
 }
 
-func getBlobWithCompression(ctx context.Context, cs content.Store, desc ocispecs.Descriptor, compressionType compression.Type) (ocispecs.Descriptor, error) {
+func (sr *immutableRef) getBlobWithForceCompression(ctx context.Context, cs content.Store, compressionType compression.Type) (*ocispecs.Descriptor, bool) {
+	var dgst digest.Digest
+	var skipWalk = false
+	if compressionType == compression.NydusBootstrap {
+		dgst = digest.Digest(sr.GetString(keyCachedNydusBootstrap))
+		skipWalk = true
+	} else if compressionType == compression.NydusBlob {
+		dgst = digest.Digest(sr.GetString(keyCachedNydusBlob))
+		skipWalk = true
+	} else {
+		dgst = digest.Digest(sr.GetString(fmt.Sprintf("%s.%s", keyForceCompressionBlob, compressionType)))
+		if dgst != "" {
+			skipWalk = true
+		}
+	}
+	if dgst.Validate() != nil {
+		return nil, skipWalk
+	}
+	if desc, err := getBlobDesc(ctx, cs, dgst); err == nil {
+		return &desc, skipWalk
+	}
+
+	return nil, skipWalk
+}
+
+func (sr *immutableRef) getBlobWithCompressionWithDesc(ctx context.Context, cs content.Store, blobDesc ocispecs.Descriptor, compressionType compression.Type) (ocispecs.Descriptor, error) {
 	if compressionType == compression.UnknownCompression {
 		return ocispecs.Descriptor{}, fmt.Errorf("cannot get unknown compression type")
 	}
+	desc, skipWalk := sr.getBlobWithForceCompression(ctx, cs, compressionType)
+	if desc != nil {
+		return *desc, nil
+	} else if skipWalk {
+		return ocispecs.Descriptor{}, errdefs.ErrNotFound
+	}
 	var target *ocispecs.Descriptor
-	if err := walkBlob(ctx, cs, desc, func(desc ocispecs.Descriptor) bool {
+	if err := walkBlob(ctx, cs, blobDesc, func(desc ocispecs.Descriptor) bool {
 		if needs, err := needsConversion(ctx, cs, desc, compressionType); err == nil && !needs {
 			target = &desc
 			return false
@@ -788,7 +832,7 @@ func walkBlob(ctx context.Context, cs content.Store, desc ocispecs.Descriptor, f
 	if !f(desc) {
 		return nil
 	}
-	if _, err := walkBlobVariantsOnly(ctx, cs, desc.Digest, func(desc ocispecs.Descriptor) bool { return f(desc) }, nil); err != nil {
+	if _, err := walkBlobVariantsOnly(ctx, cs, desc.Digest, f, nil); err != nil {
 		return err
 	}
 	return nil
@@ -882,7 +926,7 @@ func filterAnnotationsForSave(a map[string]string) (b map[string]string) {
 	if a == nil {
 		return nil
 	}
-	for _, k := range append(eStargzAnnotations, containerdUncompressed) {
+	for _, k := range append(append(eStargzAnnotations, containerdUncompressed), nydusUtils.NydusAnnotations...) {
 		v, ok := a[k]
 		if !ok {
 			continue

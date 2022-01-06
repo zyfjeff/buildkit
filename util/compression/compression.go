@@ -8,6 +8,7 @@ import (
 	"github.com/containerd/containerd/content"
 	"github.com/containerd/containerd/images"
 	"github.com/containerd/stargz-snapshotter/estargz"
+	nydusUtils "github.com/goharbor/acceleration-service/pkg/driver/nydus/utils"
 	digest "github.com/opencontainers/go-digest"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/pkg/errors"
@@ -26,6 +27,12 @@ const (
 
 	// EStargz is used for estargz data.
 	EStargz
+
+	// NydusBlob is used for Nydus blob data.
+	NydusBlob
+
+	// NydusBootstrap is used for Nydus bootstrap data.
+	NydusBootstrap
 
 	// Zstd is used for Zstandard data.
 	Zstd
@@ -71,6 +78,10 @@ func Parse(t string) Type {
 		return Gzip
 	case "estargz":
 		return EStargz
+	case "nydus-blob":
+		return NydusBlob
+	case "nydus-bootstrap":
+		return NydusBootstrap
 	case "zstd":
 		return Zstd
 	default:
@@ -86,6 +97,10 @@ func (ct Type) String() string {
 		return "gzip"
 	case EStargz:
 		return "estargz"
+	case NydusBlob:
+		return "nydus-blob"
+	case NydusBootstrap:
+		return "nydus-bootstrap"
 	case Zstd:
 		return "zstd"
 	default:
@@ -97,8 +112,10 @@ func (ct Type) DefaultMediaType() string {
 	switch ct {
 	case Uncompressed:
 		return ocispecs.MediaTypeImageLayer
-	case Gzip, EStargz:
+	case Gzip, EStargz, NydusBootstrap:
 		return ocispecs.MediaTypeImageLayerGzip
+	case NydusBlob:
+		return nydusUtils.MediaTypeNydusBlob
 	case Zstd:
 		return mediaTypeImageLayerZstd
 	default:
@@ -122,9 +139,37 @@ func FromMediaType(mediaType string) Type {
 		return Gzip
 	case mediaTypeImageLayerZstd, ocispecs.MediaTypeImageLayerNonDistributableZstd:
 		return Zstd
+	case nydusUtils.MediaTypeNydusBlob:
+		return NydusBlob
 	default:
 		return UnknownCompression
 	}
+}
+
+func FromDesc(desc ocispecs.Descriptor) Type {
+	if IsNydusBootstrap(desc) {
+		return NydusBootstrap
+	}
+	if IsNydusBlob(desc) {
+		return NydusBlob
+	}
+	return FromMediaType(desc.MediaType)
+}
+
+func IsNydusBootstrap(desc ocispecs.Descriptor) bool {
+	if _, ok := desc.Annotations[nydusUtils.LayerAnnotationNydusBootstrap]; ok {
+		return true
+	}
+
+	return false
+}
+
+func IsNydusBlob(desc ocispecs.Descriptor) bool {
+	if _, ok := desc.Annotations[nydusUtils.LayerAnnotationNydusBlob]; ok {
+		return true
+	}
+
+	return false
 }
 
 // DetectLayerMediaType returns media type from existing blob data.
@@ -203,6 +248,7 @@ var toDockerLayerType = map[string]string{
 	ocispecs.MediaTypeImageLayerNonDistributableGzip: images.MediaTypeDockerSchema2LayerForeignGzip,
 	mediaTypeImageLayerZstd:                          mediaTypeDockerSchema2LayerZstd,
 	mediaTypeDockerSchema2LayerZstd:                  mediaTypeDockerSchema2LayerZstd,
+	nydusUtils.MediaTypeNydusBlob:                    nydusUtils.MediaTypeNydusBlob,
 }
 
 var toOCILayerType = map[string]string{
@@ -217,6 +263,7 @@ var toOCILayerType = map[string]string{
 	images.MediaTypeDockerSchema2LayerForeignGzip:    ocispecs.MediaTypeImageLayerNonDistributableGzip,
 	mediaTypeImageLayerZstd:                          mediaTypeImageLayerZstd,
 	mediaTypeDockerSchema2LayerZstd:                  mediaTypeImageLayerZstd,
+	nydusUtils.MediaTypeNydusBlob:                    nydusUtils.MediaTypeNydusBlob,
 }
 
 func convertLayerMediaType(mediaType string, oci bool) string {

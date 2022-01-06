@@ -54,7 +54,7 @@ func (sr *immutableRef) GetRemotes(ctx context.Context, createIfNeeded bool, ref
 	// compression with all combination of copmressions
 	res := []*solver.Remote{remote}
 	topmost, parentChain := remote.Descriptors[len(remote.Descriptors)-1], remote.Descriptors[:len(remote.Descriptors)-1]
-	vDesc, err := getBlobWithCompression(ctx, sr.cm.ContentStore, topmost, refCfg.Compression.Type)
+	vDesc, err := sr.getBlobWithCompressionWithDesc(ctx, sr.cm.ContentStore, topmost, refCfg.Compression.Type)
 	if err != nil {
 		return res, nil // compression variant doesn't exist. return the main blob only.
 	}
@@ -67,7 +67,7 @@ func (sr *immutableRef) GetRemotes(ctx context.Context, createIfNeeded bool, ref
 		})
 	} else {
 		// get parents with all combination of all available compressions.
-		parents, err := getAvailableBlobs(ctx, sr.cm.ContentStore, &solver.Remote{
+		parents, err := sr.getAvailableBlobs(ctx, sr.cm.ContentStore, &solver.Remote{
 			Descriptors: parentChain,
 			Provider:    remote.Provider,
 		})
@@ -97,12 +97,12 @@ func appendRemote(parents []*solver.Remote, desc ocispecs.Descriptor, p content.
 	return
 }
 
-func getAvailableBlobs(ctx context.Context, cs content.Store, chain *solver.Remote) ([]*solver.Remote, error) {
+func (sr *immutableRef) getAvailableBlobs(ctx context.Context, cs content.Store, chain *solver.Remote) ([]*solver.Remote, error) {
 	if len(chain.Descriptors) == 0 {
 		return nil, nil
 	}
 	target, parentChain := chain.Descriptors[len(chain.Descriptors)-1], chain.Descriptors[:len(chain.Descriptors)-1]
-	parents, err := getAvailableBlobs(ctx, cs, &solver.Remote{
+	parents, err := sr.getAvailableBlobs(ctx, cs, &solver.Remote{
 		Descriptors: parentChain,
 		Provider:    chain.Provider,
 	})
@@ -139,7 +139,7 @@ func getAvailableBlobs(ctx context.Context, cs content.Store, chain *solver.Remo
 }
 
 func (sr *immutableRef) getRemote(ctx context.Context, createIfNeeded bool, refCfg config.RefConfig, s session.Group) (*solver.Remote, error) {
-	err := sr.computeBlobChain(ctx, createIfNeeded, refCfg.Compression, s)
+	extraDescs, err := sr.computeBlobChain(ctx, createIfNeeded, refCfg.Compression, s)
 	if err != nil {
 		return nil, err
 	}
@@ -151,6 +151,11 @@ func (sr *immutableRef) getRemote(ctx context.Context, createIfNeeded bool, refC
 		Provider: mprovider,
 	}
 	for _, ref := range chain {
+		// If the nydus blob content is empty, do not append to manifest.
+		if refCfg.Compression.Type == compression.NydusBlob && isEmptyNydusBlob(ref) {
+			continue
+		}
+
 		desc, err := ref.ociDesc(ctx, sr.descHandlers, refCfg.PreferNonDistributable)
 		if err != nil {
 			return nil, err
@@ -212,33 +217,37 @@ func (sr *immutableRef) getRemote(ctx context.Context, createIfNeeded bool, refC
 			}
 		}
 
+		needs := false
 		if refCfg.Compression.Force {
-			if needs, err := needsConversion(ctx, sr.cm.ContentStore, desc, refCfg.Compression.Type); err != nil {
+			needs, err = needsConversion(ctx, sr.cm.ContentStore, desc, refCfg.Compression.Type)
+			if err != nil {
 				return nil, err
-			} else if needs {
-				// ensure the compression type.
-				// compressed blob must be created and stored in the content store.
-				blobDesc, err := getBlobWithCompressionWithRetry(ctx, ref, refCfg.Compression, s)
-				if err != nil {
-					return nil, errors.Wrapf(err, "failed to get compression blob %q", refCfg.Compression.Type)
-				}
-				newDesc := desc
-				newDesc.MediaType = blobDesc.MediaType
-				newDesc.Digest = blobDesc.Digest
-				newDesc.Size = blobDesc.Size
-				newDesc.URLs = blobDesc.URLs
-				newDesc.Annotations = nil
-				for _, k := range addAnnotations {
-					newDesc.Annotations[k] = desc.Annotations[k]
-				}
-				for k, v := range blobDesc.Annotations {
-					if newDesc.Annotations == nil {
-						newDesc.Annotations = make(map[string]string)
-					}
-					newDesc.Annotations[k] = v
-				}
-				desc = newDesc
 			}
+		}
+
+		if needs || needsForceCompression(desc, refCfg.Compression.Type) {
+			// ensure the compression type.
+			// compressed blob must be created and stored in the content store.
+			blobDesc, err := getBlobWithCompressionWithRetry(ctx, ref, refCfg.Compression, s)
+			if err != nil {
+				return nil, errors.Wrapf(err, "failed to get compression blob %q", refCfg.Compression.Type)
+			}
+			newDesc := desc
+			newDesc.MediaType = blobDesc.MediaType
+			newDesc.Digest = blobDesc.Digest
+			newDesc.Size = blobDesc.Size
+			newDesc.URLs = blobDesc.URLs
+			newDesc.Annotations = nil
+			for _, k := range addAnnotations {
+				newDesc.Annotations[k] = desc.Annotations[k]
+			}
+			for k, v := range blobDesc.Annotations {
+				if newDesc.Annotations == nil {
+					newDesc.Annotations = make(map[string]string)
+				}
+				newDesc.Annotations[k] = v
+			}
+			desc = newDesc
 		}
 
 		remote.Descriptors = append(remote.Descriptors, desc)
@@ -249,6 +258,20 @@ func (sr *immutableRef) getRemote(ctx context.Context, createIfNeeded bool, refC
 			session: s,
 		})
 	}
+
+	// The last layer of nydus image is bootstrap, it need to be appended to manifest.
+	if refCfg.Compression.Type == compression.NydusBlob && len(chain) > 0 {
+		for _, desc := range extraDescs {
+			remote.Descriptors = append(remote.Descriptors, desc)
+			mprovider.Add(lazyRefProvider{
+				ref:     chain[len(chain)-1],
+				desc:    desc,
+				dh:      sr.descHandlers[desc.Digest],
+				session: s,
+			})
+		}
+	}
+
 	return remote, nil
 }
 

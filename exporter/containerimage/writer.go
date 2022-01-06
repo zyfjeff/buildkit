@@ -72,7 +72,7 @@ func (ic *ImageWriter) Commit(ctx context.Context, inp exporter.Source, oci bool
 			}
 		}
 
-		mfstDesc, configDesc, err := ic.commitDistributionManifest(ctx, inp.Ref, inp.Metadata[exptypes.ExporterImageConfigKey], &remotes[0], oci, inp.Metadata[exptypes.ExporterInlineCache], dtbi)
+		mfstDesc, configDesc, err := ic.commitDistributionManifest(ctx, inp.Ref, refCfg.Compression.Type, inp.Metadata[exptypes.ExporterImageConfigKey], &remotes[0], oci, inp.Metadata[exptypes.ExporterInlineCache], dtbi)
 		if err != nil {
 			return nil, err
 		}
@@ -143,7 +143,7 @@ func (ic *ImageWriter) Commit(ctx context.Context, inp exporter.Source, oci bool
 			}
 		}
 
-		desc, _, err := ic.commitDistributionManifest(ctx, r, config, &remotes[remotesMap[p.ID]], oci, inlineCache, dtbi)
+		desc, _, err := ic.commitDistributionManifest(ctx, r, refCfg.Compression.Type, config, &remotes[remotesMap[p.ID]], oci, inlineCache, dtbi)
 		if err != nil {
 			return nil, err
 		}
@@ -212,7 +212,7 @@ func (ic *ImageWriter) exportLayers(ctx context.Context, refCfg cacheconfig.RefC
 	return out, err
 }
 
-func (ic *ImageWriter) commitDistributionManifest(ctx context.Context, ref cache.ImmutableRef, config []byte, remote *solver.Remote, oci bool, inlineCache []byte, buildInfo []byte) (*ocispecs.Descriptor, *ocispecs.Descriptor, error) {
+func (ic *ImageWriter) commitDistributionManifest(ctx context.Context, ref cache.ImmutableRef, compressionType compression.Type, config []byte, remote *solver.Remote, oci bool, inlineCache []byte, buildInfo []byte) (*ocispecs.Descriptor, *ocispecs.Descriptor, error) {
 	if len(config) == 0 {
 		var err error
 		config, err = emptyImageConfig()
@@ -232,7 +232,7 @@ func (ic *ImageWriter) commitDistributionManifest(ctx context.Context, ref cache
 		return nil, nil, err
 	}
 
-	remote, history = normalizeLayersAndHistory(ctx, remote, history, ref, oci)
+	remote, history = normalizeLayersAndHistory(ctx, remote, history, ref, compressionType, oci)
 
 	config, err = patchImageConfig(config, remote.Descriptors, history, inlineCache, buildInfo)
 	if err != nil {
@@ -276,7 +276,8 @@ func (ic *ImageWriter) commitDistributionManifest(ctx context.Context, ref cache
 	}
 
 	for i, desc := range remote.Descriptors {
-		// oci supports annotations but don't export internal annotations
+		// oci supports annotations but don't export internal annotations,
+		// for nydus compression type, keep
 		if oci {
 			delete(desc.Annotations, "containerd.io/uncompressed")
 			delete(desc.Annotations, "buildkit/createdat")
@@ -434,7 +435,7 @@ func patchImageConfig(dt []byte, descs []ocispecs.Descriptor, history []ocispecs
 	return dt, errors.Wrap(err, "failed to marshal config after patch")
 }
 
-func normalizeLayersAndHistory(ctx context.Context, remote *solver.Remote, history []ocispecs.History, ref cache.ImmutableRef, oci bool) (*solver.Remote, []ocispecs.History) {
+func normalizeLayersAndHistory(ctx context.Context, remote *solver.Remote, history []ocispecs.History, ref cache.ImmutableRef, compressionType compression.Type, oci bool) (*solver.Remote, []ocispecs.History) {
 	refMeta := getRefMetadata(ref, len(remote.Descriptors))
 
 	var historyLayers int
@@ -445,9 +446,11 @@ func normalizeLayersAndHistory(ctx context.Context, remote *solver.Remote, histo
 	}
 
 	if historyLayers > len(remote.Descriptors) {
-		// this case shouldn't happen but if it does force set history layers empty
-		// from the bottom
-		bklog.G(ctx).Warn("invalid image config with unaccounted layers")
+		if compressionType != compression.NydusBlob {
+			// this case shouldn't happen but if it does force set history layers empty
+			// from the bottom
+			bklog.G(ctx).Warn("invalid image config with unaccounted layers")
+		}
 		historyCopy := make([]ocispecs.History, 0, len(history))
 		var l int
 		for _, h := range history {

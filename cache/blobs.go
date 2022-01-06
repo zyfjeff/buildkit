@@ -36,13 +36,13 @@ var ErrNoBlobs = errors.Errorf("no blobs for snapshot")
 // a blob is missing and createIfNeeded is true, then the blob will be created, otherwise ErrNoBlobs will
 // be returned. Caller must hold a lease when calling this function.
 // If forceCompression is specified but the blob of compressionType doesn't exist, this function creates it.
-func (sr *immutableRef) computeBlobChain(ctx context.Context, createIfNeeded bool, comp compression.Config, s session.Group) error {
+func (sr *immutableRef) computeBlobChain(ctx context.Context, createIfNeeded bool, comp compression.Config, s session.Group) ([]ocispecs.Descriptor, error) {
 	if _, ok := leases.FromContext(ctx); !ok {
-		return errors.Errorf("missing lease requirement for computeBlobChain")
+		return nil, errors.Errorf("missing lease requirement for computeBlobChain")
 	}
 
 	if err := sr.Finalize(ctx); err != nil {
-		return err
+		return nil, err
 	}
 
 	if isTypeWindows(sr) {
@@ -54,7 +54,16 @@ func (sr *immutableRef) computeBlobChain(ctx context.Context, createIfNeeded boo
 	// refs rather than every single layer present among their ancestors.
 	filter := sr.layerSet()
 
-	return computeBlobChain(ctx, sr, createIfNeeded, comp, s, filter)
+	var err error
+	extraDescs := []ocispecs.Descriptor{}
+	if comp.Type == compression.NydusBlob {
+		// For nydus image, an additional bootstrap layer needs to be appended to manifest.
+		extraDescs, err = computeNydusBlobChain(ctx, sr, s)
+	} else {
+		err = computeBlobChain(ctx, sr, createIfNeeded, comp, s, filter)
+	}
+
+	return extraDescs, err
 }
 
 type compressor func(dest io.Writer, requiredMediaType string) (io.WriteCloser, error)
@@ -274,6 +283,14 @@ func computeBlobChain(ctx context.Context, sr *immutableRef, createIfNeeded bool
 				return err
 			}
 
+			desc, err := sr.ociDesc(ctx, sr.descHandlers, true)
+			if err != nil {
+				return err
+			}
+			if needsForceCompression(desc, comp.Type) {
+				comp.Force = true
+			}
+
 			if comp.Force {
 				if err := ensureCompression(ctx, sr, comp, s); err != nil {
 					return errors.Wrapf(err, "failed to ensure compression type of %q", comp.Type)
@@ -449,7 +466,7 @@ func ensureCompression(ctx context.Context, ref *immutableRef, comp compression.
 		}
 
 		// Resolve converters
-		layerConvertFunc, err := getConverter(ctx, ref.cm.ContentStore, desc, comp)
+		layerConvertFunc, err := getConverter(ctx, ref, desc, comp, s)
 		if err != nil {
 			return nil, err
 		} else if layerConvertFunc == nil {
