@@ -39,6 +39,9 @@ github.com/Microsoft/hcsshim/pkg/ociwclayer
 # github.com/agext/levenshtein v1.2.3
 ## explicit
 github.com/agext/levenshtein
+# github.com/aliyun/aliyun-oss-go-sdk v2.2.0+incompatible
+## explicit
+github.com/aliyun/aliyun-oss-go-sdk/oss
 # github.com/armon/circbuf v0.0.0-20190214190532-5111143e8da2
 ## explicit
 github.com/armon/circbuf
@@ -288,7 +291,7 @@ github.com/go-logr/logr/funcr
 # github.com/go-logr/stdr v1.2.2
 ## explicit; go 1.16
 github.com/go-logr/stdr
-# github.com/gofrs/flock v0.7.3
+# github.com/gofrs/flock v0.8.0
 ## explicit
 github.com/gofrs/flock
 # github.com/gogo/googleapis v1.4.1
@@ -301,6 +304,12 @@ github.com/gogo/protobuf/proto
 github.com/gogo/protobuf/protoc-gen-gogo/descriptor
 github.com/gogo/protobuf/sortkeys
 github.com/gogo/protobuf/types
+# github.com/goharbor/acceleration-service v0.0.0-20220216102546-a77d7f67c8a0
+## explicit; go 1.16
+github.com/goharbor/acceleration-service/pkg/driver/nydus/backend
+github.com/goharbor/acceleration-service/pkg/driver/nydus/builder
+github.com/goharbor/acceleration-service/pkg/driver/nydus/packer
+github.com/goharbor/acceleration-service/pkg/driver/nydus/utils
 # github.com/golang-jwt/jwt/v4 v4.1.0
 ## explicit; go 1.15
 github.com/golang-jwt/jwt/v4
@@ -613,7 +622,7 @@ golang.org/x/text/secure/bidirule
 golang.org/x/text/transform
 golang.org/x/text/unicode/bidi
 golang.org/x/text/unicode/norm
-# golang.org/x/time v0.0.0-20210723032227-1f47c861a9ac
+# golang.org/x/time v0.0.0-20211116232009-f0f3c7e86c11
 ## explicit
 golang.org/x/time/rate
 # google.golang.org/genproto v0.0.0-20211208223120-3a66f561d7aa
