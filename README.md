@@ -236,7 +236,7 @@ Keys supported by image output:
 * `unpack=true`: unpack image after creation (for use with containerd)
 * `dangling-name-prefix=[value]`: name image with `prefix@<digest>` , used for anonymous images
 * `name-canonical=true`: add additional canonical name `name@<digest>`
-* `compression=[uncompressed,gzip,estargz,zstd]`: choose compression type for layers newly created and cached, gzip is default value. estargz should be used with `oci-mediatypes=true`.
+* `compression=[uncompressed,gzip,estargz,zstd,nydus]`: choose compression type for layers newly created and cached, gzip is default value. estargz or nydus should be used with `oci-mediatypes=true`.
 * `compression-level=[value]`: compression level for gzip, estargz (0-9) and zstd (0-22)
 * `force-compression=true`: forcefully apply `compression` option to all layers (including already existing layers).
 * `buildinfo=true`: inline build info in [image config](docs/build-repro.md#image-config) (default `true`).
