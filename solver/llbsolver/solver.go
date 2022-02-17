@@ -333,6 +333,13 @@ func inlineCache(ctx context.Context, e remotecache.Exporter, res solver.CachedR
 	if !ok {
 		return nil, nil
 	}
+
+	if compressionopt.Type == compression.NydusBlob {
+		// Since the nydus image layer does not correspond to the cache records,
+		// the inline cache export of nydus image is disabled here.
+		return nil, errors.Errorf("inline cache with %s compression is unsupported", compressionopt.Type)
+	}
+
 	workerRef, ok := res.Sys().(*worker.WorkerRef)
 	if !ok {
 		return nil, errors.Errorf("invalid reference: %T", res.Sys())
