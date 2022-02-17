@@ -25,9 +25,10 @@ buildctl build ... \
 
 ### Known limitations
 
-- The export of nydus image and runtime (e.g. [docker](https://github.com/dragonflyoss/image-service/tree/master/contrib/docker-nydus-graphdriver), [containerd](https://github.com/containerd/nydus-snapshotter), etc.) is currently only supported on linux platform.
-- Nydus image layers cannot be mixed with other compression types in the same image, so the `force-compression=true` option is automatically enabled when exporting both nydus compression type and other compression types.
-- Specifying a nydus image as a base image in a Dockerfile is not currently supported (i.e. lazily pull using a nydus image).
+- The export of Nydus image and runtime (e.g. [docker](https://github.com/dragonflyoss/image-service/tree/master/contrib/docker-nydus-graphdriver), [containerd](https://github.com/containerd/nydus-snapshotter), etc.) is currently only supported on linux platform.
+- Nydus image layers cannot be mixed with other compression types in the same image, so the `force-compression=true` option is automatically enabled when exporting both Nydus compression type and other compression types.
+- Since the nydus image layer does not correspond to the cache records, and for now nydus compression type can't support decompression, the inline cache or other cache exports with nydus compression is unsupported.
+- Specifying a Nydus image as a base image in a Dockerfile is not currently supported (i.e. lazily pull using a Nydus image).
 
 ### Other ways to create Nydus images
 
