@@ -242,6 +242,9 @@ func (s *Solver) Solve(ctx context.Context, id string, sessionID string, req fro
 			inp.Refs = m
 		}
 		if _, ok := asInlineCache(exp.CacheExporter); ok {
+			if err := checkCompressionForCacheExport(e.Config().Compression); err != nil {
+				return nil, err
+			}
 			if err := inBuilderContext(ctx, j, "preparing layers for inline cache", "", func(ctx context.Context, _ session.Group) error {
 				if cr != nil {
 					dtic, err := inlineCache(ctx, exp.CacheExporter, cr, e.Config().Compression, session.NewGroup(sessionID))
@@ -278,6 +281,9 @@ func (s *Solver) Solve(ctx context.Context, id string, sessionID string, req fro
 	g := session.NewGroup(j.SessionID)
 	var cacheExporterResponse map[string]string
 	if e := exp.CacheExporter; e != nil {
+		if err := checkCompressionForCacheExport(e.Config().Compression); err != nil {
+			return nil, err
+		}
 		if err := inBuilderContext(ctx, j, "exporting cache", "", func(ctx context.Context, _ session.Group) error {
 			prepareDone := oneOffProgress(ctx, "preparing build cache for export")
 			if err := res.EachRef(func(res solver.ResultProxy) error {
@@ -351,6 +357,7 @@ func inlineCache(ctx context.Context, e remotecache.Exporter, res solver.CachedR
 	if !ok {
 		return nil, nil
 	}
+
 	workerRef, ok := res.Sys().(*worker.WorkerRef)
 	if !ok {
 		return nil, errors.Errorf("invalid reference: %T", res.Sys())
@@ -507,4 +514,16 @@ func loadEntitlements(b solver.Builder) (entitlements.Set, error) {
 		return nil, err
 	}
 	return ent, nil
+}
+
+func checkCompressionForCacheExport(comp compression.Config) error {
+	switch comp.Type {
+	case compression.Nydus:
+		// Since the nydus image layer does not correspond to the cache records,
+		// and for now nydus compression type hasn't supported decompression, the
+		// inline cache or other cache exports with nydus compression is disabled.
+		return errors.Errorf("export cache with %q compression is unsupported", comp.Type)
+	default:
+		return nil
+	}
 }
