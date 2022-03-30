@@ -881,7 +881,7 @@ func filterAnnotationsForSave(a map[string]string) (b map[string]string) {
 	if a == nil {
 		return nil
 	}
-	for _, k := range append(eStargzAnnotations, containerdUncompressed) {
+	for _, k := range append(eStargzAnnotations, append(nydusAnnotations, containerdUncompressed)...) {
 		v, ok := a[k]
 		if !ok {
 			continue

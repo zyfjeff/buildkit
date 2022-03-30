@@ -13,6 +13,7 @@ import (
 	"github.com/containerd/containerd/diff/walking"
 	"github.com/containerd/containerd/leases"
 	"github.com/containerd/containerd/mount"
+	nydusify "github.com/containerd/nydus-snapshotter/pkg/converter"
 	"github.com/klauspost/compress/zstd"
 	"github.com/moby/buildkit/session"
 	"github.com/moby/buildkit/util/compression"
@@ -79,6 +80,9 @@ func doCompression(ctx context.Context, sr *immutableRef, comp compression.Confi
 			return zstdWriter(comp)(dest)
 		}
 		mediaType = ocispecs.MediaTypeImageLayer + "+zstd"
+	case compression.Nydus:
+		compressorFunc, finalize = compressNydus(ctx, comp)
+		mediaType = nydusify.MediaTypeNydusBlob
 	default:
 		return nil, errors.Errorf("unknown layer compression type: %q", comp.Type)
 	}
@@ -174,7 +178,7 @@ func doCompression(ctx context.Context, sr *immutableRef, comp compression.Confi
 		}
 	}
 
-	if desc.Digest == "" && !isTypeWindows(sr) && (comp.Type == compression.Zstd || comp.Type == compression.EStargz) {
+	if desc.Digest == "" && !isTypeWindows(sr) && (comp.Type == compression.Zstd || comp.Type == compression.EStargz || comp.Type == compression.Nydus) {
 		// These compression types aren't supported by containerd differ. So try to compute diff on buildkit side.
 		// This case can be happen on containerd worker + non-overlayfs snapshotter (e.g. native).
 		// See also: https://github.com/containerd/containerd/issues/4263
@@ -449,7 +453,7 @@ func ensureCompression(ctx context.Context, ref *immutableRef, comp compression.
 		}
 
 		// Resolve converters
-		layerConvertFunc, err := getConverter(ctx, ref.cm.ContentStore, desc, comp)
+		layerConvertFunc, err := getConverter(ctx, ref, desc, comp, s)
 		if err != nil {
 			return nil, err
 		} else if layerConvertFunc == nil {
