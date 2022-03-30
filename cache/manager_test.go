@@ -1432,7 +1432,7 @@ func testSharingCompressionVariant(ctx context.Context, t *testing.T, co *cmOut,
 			require.NoError(t, err, "compression: %v", c)
 			uDgst := bDesc.Digest
 			if c != compression.Uncompressed {
-				convertFunc, err := getConverter(ctx, co.cs, bDesc, compression.New(compression.Uncompressed))
+				convertFunc, err := getConverter(ctx, bRef.(*immutableRef), bDesc, compression.New(compression.Uncompressed), session.NewGroup())
 				require.NoError(t, err, "compression: %v", c)
 				uDesc, err := convertFunc(ctx, co.cs, bDesc)
 				require.NoError(t, err, "compression: %v", c)
@@ -1568,8 +1568,12 @@ func TestConversion(t *testing.T) {
 				eg.Go(func() error {
 					testName := fmt.Sprintf("%s=>%s", i, j)
 
+					ref, err := co.manager.GetByBlob(ctx, orgDesc, nil)
+					require.NoError(t, err, testName)
+					sg := session.NewGroup()
+
 					// Prepare the source compression type
-					convertFunc, err := getConverter(egctx, store, orgDesc, compSrc)
+					convertFunc, err := getConverter(egctx, ref.(*immutableRef), orgDesc, compSrc, sg)
 					require.NoError(t, err, testName)
 					srcDesc := &orgDesc
 					if convertFunc != nil {
@@ -1578,7 +1582,7 @@ func TestConversion(t *testing.T) {
 					}
 
 					// Convert the blob
-					convertFunc, err = getConverter(egctx, store, *srcDesc, compDest)
+					convertFunc, err = getConverter(egctx, ref.(*immutableRef), *srcDesc, compDest, sg)
 					require.NoError(t, err, testName)
 					resDesc := srcDesc
 					if convertFunc != nil {
@@ -1587,7 +1591,7 @@ func TestConversion(t *testing.T) {
 					}
 
 					// Check the uncompressed digest is the same as the original
-					convertFunc, err = getConverter(egctx, store, *resDesc, compression.New(compression.Uncompressed))
+					convertFunc, err = getConverter(egctx, ref.(*immutableRef), *resDesc, compression.New(compression.Uncompressed), sg)
 					require.NoError(t, err, testName)
 					recreatedDesc := resDesc
 					if convertFunc != nil {
