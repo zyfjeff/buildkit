@@ -14,6 +14,7 @@ import (
 	"github.com/containerd/containerd/log"
 	"github.com/containerd/containerd/remotes"
 	"github.com/containerd/containerd/remotes/docker"
+	nydusify "github.com/containerd/nydus-snapshotter/pkg/converter"
 	"github.com/docker/distribution/reference"
 	"github.com/moby/buildkit/session"
 	"github.com/moby/buildkit/util/flightcontrol"
@@ -266,7 +267,7 @@ func childrenHandler(provider content.Provider) images.HandlerFunc {
 			}
 		case images.MediaTypeDockerSchema2Layer, images.MediaTypeDockerSchema2LayerGzip,
 			images.MediaTypeDockerSchema2Config, ocispecs.MediaTypeImageConfig,
-			ocispecs.MediaTypeImageLayer, ocispecs.MediaTypeImageLayerGzip:
+			ocispecs.MediaTypeImageLayer, ocispecs.MediaTypeImageLayerGzip, nydusify.MediaTypeNydusBlob:
 			// childless data types.
 			return nil, nil
 		default:

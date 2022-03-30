@@ -13,6 +13,7 @@ import (
 	"github.com/containerd/containerd/diff/walking"
 	"github.com/containerd/containerd/leases"
 	"github.com/containerd/containerd/mount"
+	nydusify "github.com/containerd/nydus-snapshotter/pkg/converter"
 	"github.com/klauspost/compress/zstd"
 	"github.com/moby/buildkit/session"
 	"github.com/moby/buildkit/util/compression"
@@ -79,6 +80,9 @@ func doCompression(ctx context.Context, sr *immutableRef, comp compression.Confi
 			return zstdWriter(comp)(dest)
 		}
 		mediaType = ocispecs.MediaTypeImageLayer + "+zstd"
+	case compression.Nydus:
+		compressorFunc, finalize = compressNydus(ctx, comp)
+		mediaType = nydusify.MediaTypeNydusBlob
 	default:
 		return nil, errors.Errorf("unknown layer compression type: %q", comp.Type)
 	}
@@ -449,7 +453,7 @@ func ensureCompression(ctx context.Context, ref *immutableRef, comp compression.
 		}
 
 		// Resolve converters
-		layerConvertFunc, err := getConverter(ctx, ref.cm.ContentStore, desc, comp)
+		layerConvertFunc, err := getConverter(ctx, ref, desc, comp, s)
 		if err != nil {
 			return nil, err
 		} else if layerConvertFunc == nil {

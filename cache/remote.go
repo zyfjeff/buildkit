@@ -249,6 +249,21 @@ func (sr *immutableRef) getRemote(ctx context.Context, createIfNeeded bool, refC
 			session: s,
 		})
 	}
+
+	if refCfg.Compression.Type == compression.Nydus {
+		desc, err := mergeNydus(ctx, chain, refCfg.Compression, s)
+		if err != nil {
+			return nil, errors.Wrap(err, "merge nydus layer")
+		}
+		remote.Descriptors = append(remote.Descriptors, *desc)
+		mprovider.Add(lazyRefProvider{
+			ref:     sr.clone(),
+			desc:    *desc,
+			dh:      sr.descHandlers[desc.Digest],
+			session: s,
+		})
+	}
+
 	return remote, nil
 }
 

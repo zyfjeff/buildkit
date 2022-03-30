@@ -13,6 +13,7 @@ require (
 	github.com/containerd/fuse-overlayfs-snapshotter v1.0.2
 	github.com/containerd/go-cni v1.1.3
 	github.com/containerd/go-runc v1.0.0
+	github.com/containerd/nydus-snapshotter v0.0.0
 	github.com/containerd/stargz-snapshotter v0.11.3
 	github.com/containerd/stargz-snapshotter/estargz v0.11.3
 	github.com/containerd/typeurl v1.0.2
@@ -123,3 +124,5 @@ require (
 )
 
 replace github.com/docker/docker => github.com/docker/docker v20.10.3-0.20220224222438-c78f6963a1c0+incompatible
+
+replace github.com/containerd/nydus-snapshotter v0.0.0 => github.com/imeoer/nydus-snapshotter v0.2.9
