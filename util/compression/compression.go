@@ -7,6 +7,7 @@ import (
 
 	"github.com/containerd/containerd/content"
 	"github.com/containerd/containerd/images"
+	nydusify "github.com/containerd/nydus-snapshotter/pkg/converter"
 	"github.com/containerd/stargz-snapshotter/estargz"
 	digest "github.com/opencontainers/go-digest"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
@@ -29,6 +30,9 @@ const (
 
 	// Zstd is used for Zstandard data.
 	Zstd
+
+	// Nydus is used for nydus data.
+	Nydus
 
 	// UnknownCompression means not supported yet.
 	UnknownCompression Type = -1
@@ -73,6 +77,8 @@ func Parse(t string) Type {
 		return EStargz
 	case "zstd":
 		return Zstd
+	case "nydus":
+		return Nydus
 	default:
 		return UnknownCompression
 	}
@@ -88,6 +94,8 @@ func (ct Type) String() string {
 		return "estargz"
 	case Zstd:
 		return "zstd"
+	case Nydus:
+		return "nydus"
 	default:
 		return "unknown"
 	}
@@ -101,6 +109,8 @@ func (ct Type) DefaultMediaType() string {
 		return ocispecs.MediaTypeImageLayerGzip
 	case Zstd:
 		return mediaTypeImageLayerZstd
+	case Nydus:
+		return nydusify.MediaTypeNydusBlob
 	default:
 		return ocispecs.MediaTypeImageLayer + "+unknown"
 	}
@@ -122,6 +132,8 @@ func FromMediaType(mediaType string) Type {
 		return Gzip
 	case mediaTypeImageLayerZstd, ocispecs.MediaTypeImageLayerNonDistributableZstd:
 		return Zstd
+	case nydusify.MediaTypeNydusBlob:
+		return Nydus
 	default:
 		return UnknownCompression
 	}
@@ -203,6 +215,7 @@ var toDockerLayerType = map[string]string{
 	ocispecs.MediaTypeImageLayerNonDistributableGzip: images.MediaTypeDockerSchema2LayerForeignGzip,
 	mediaTypeImageLayerZstd:                          mediaTypeDockerSchema2LayerZstd,
 	mediaTypeDockerSchema2LayerZstd:                  mediaTypeDockerSchema2LayerZstd,
+	nydusify.MediaTypeNydusBlob:                      nydusify.MediaTypeNydusBlob,
 }
 
 var toOCILayerType = map[string]string{
@@ -217,6 +230,7 @@ var toOCILayerType = map[string]string{
 	images.MediaTypeDockerSchema2LayerForeignGzip:    ocispecs.MediaTypeImageLayerNonDistributableGzip,
 	mediaTypeImageLayerZstd:                          mediaTypeImageLayerZstd,
 	mediaTypeDockerSchema2LayerZstd:                  mediaTypeImageLayerZstd,
+	nydusify.MediaTypeNydusBlob:                      nydusify.MediaTypeNydusBlob,
 }
 
 func convertLayerMediaType(mediaType string, oci bool) string {

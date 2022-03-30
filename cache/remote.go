@@ -212,7 +212,7 @@ func (sr *immutableRef) getRemote(ctx context.Context, createIfNeeded bool, refC
 			}
 		}
 
-		if refCfg.Compression.Force {
+		if refCfg.Compression.Force || needsForceCompression(desc, refCfg.Compression.Type) {
 			if needs, err := needsConversion(ctx, sr.cm.ContentStore, desc, refCfg.Compression.Type); err != nil {
 				return nil, err
 			} else if needs {
@@ -249,6 +249,25 @@ func (sr *immutableRef) getRemote(ctx context.Context, createIfNeeded bool, refC
 			session: s,
 		})
 	}
+
+	if refCfg.Compression.Type == compression.Nydus {
+		// For nydus format, appending an extra nydus bootstrap layer to the manifest,
+		// this layer represents the whole metadata of filesystem view for the entire image.
+		desc, err := mergeNydus(ctx, chain, refCfg.Compression, s)
+		if err != nil {
+			return nil, errors.Wrap(err, "merge nydus layer")
+		}
+		remote.Descriptors = append(remote.Descriptors, *desc)
+		mprovider.Add(lazyRefProvider{
+			// The nydus merge operation is fast, so we don't need to create a new cache
+			// record for this extra layer, the layer will be gc after lease expired.
+			ref:     sr,
+			desc:    *desc,
+			dh:      sr.descHandlers[desc.Digest],
+			session: s,
+		})
+	}
+
 	return remote, nil
 }
 
