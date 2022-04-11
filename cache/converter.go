@@ -14,7 +14,6 @@ import (
 	"github.com/containerd/containerd/images/converter"
 	"github.com/containerd/containerd/labels"
 	"github.com/moby/buildkit/identity"
-	"github.com/moby/buildkit/session"
 	"github.com/moby/buildkit/util/bklog"
 	"github.com/moby/buildkit/util/compression"
 	digest "github.com/opencontainers/go-digest"
@@ -61,32 +60,14 @@ func needsConversion(ctx context.Context, cs content.Store, desc ocispecs.Descri
 	return true, nil
 }
 
-// Some compression type can't be mixed with other compression types in the same image,
-// so if `source` is this kind of layer, but the target is other compression type, we
-// should do the forced compression.
-func needsForceCompression(source ocispecs.Descriptor, target compression.Type) bool {
-	if target == compression.Nydus {
-		return !isNydusBlob(source)
-	}
-	return isNydusBlob(source)
-}
-
 // getConverter returns converter function according to the specified compression type.
 // If no conversion is needed, this returns nil without error.
-func getConverter(ctx context.Context, ref *immutableRef, desc ocispecs.Descriptor, comp compression.Config, s session.Group) (converter.ConvertFunc, error) {
-	cs := ref.cm.ContentStore
-
+func getConverter(ctx context.Context, cs content.Store, desc ocispecs.Descriptor, comp compression.Config) (converter.ConvertFunc, error) {
 	if needs, err := needsConversion(ctx, cs, desc, comp.Type); err != nil {
 		return nil, errors.Wrapf(err, "failed to determine conversion needs")
 	} else if !needs {
 		// No conversion. No need to return an error here.
 		return nil, nil
-	}
-
-	if needsForceCompression(desc, comp.Type) {
-		return func(ctx context.Context, cs content.Store, desc ocispecs.Descriptor) (*ocispecs.Descriptor, error) {
-			return doCompression(ctx, ref, comp, s)
-		}, nil
 	}
 
 	c := conversion{target: comp}
@@ -116,6 +97,13 @@ func getConverter(ctx context.Context, ref *immutableRef, desc ocispecs.Descript
 			}
 			return &readCloser{r, ra.Close}, nil
 		}
+	case compression.Nydus:
+		// FIXME(imeoer): nydus compression type should implement decompression for converting.
+		return nil, errors.Wrapf(
+			errdefs.ErrNotImplemented,
+			"compression type %q hasn't implement decompression for converting",
+			from,
+		)
 	default:
 		return nil, errors.Errorf("unsupported source compression type %q from mediatype %q", from, desc.MediaType)
 	}
