@@ -46,7 +46,12 @@ func compressNydus(ctx context.Context, comp compression.Config) (compressor, fu
 // 1. Extracts nydus bootstrap from nydus format (nydus blob + nydus bootstrap) for each layer.
 // 2. Merge all nydus bootstraps into a final bootstrap (will as an extra layer).
 // The nydus bootstrap size is very small, so the merge operation is fast.
-func mergeNydus(ctx context.Context, refs []*immutableRef, comp compression.Config, s session.Group) (*ocispecs.Descriptor, error) {
+func MergeNydus(ctx context.Context, ref ImmutableRef, comp compression.Config, s session.Group) (*ocispecs.Descriptor, error) {
+	iref, ok := ref.(*immutableRef)
+	if !ok {
+		return nil, fmt.Errorf("unsupported ref")
+	}
+	refs := iref.layerChain()
 	if len(refs) == 0 {
 		return nil, fmt.Errorf("refs can't be empty")
 	}

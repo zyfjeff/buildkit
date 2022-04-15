@@ -72,7 +72,7 @@ func (ic *ImageWriter) Commit(ctx context.Context, inp exporter.Source, oci bool
 			}
 		}
 
-		mfstDesc, configDesc, err := ic.commitDistributionManifest(ctx, inp.Ref, inp.Metadata[exptypes.ExporterImageConfigKey], &remotes[0], oci, inp.Metadata[exptypes.ExporterInlineCache], dtbi)
+		mfstDesc, configDesc, err := ic.commitDistributionManifest(ctx, inp.Ref, refCfg, inp.Metadata[exptypes.ExporterImageConfigKey], &remotes[0], oci, inp.Metadata[exptypes.ExporterInlineCache], dtbi, session.NewGroup(sessionID))
 		if err != nil {
 			return nil, err
 		}
@@ -143,7 +143,7 @@ func (ic *ImageWriter) Commit(ctx context.Context, inp exporter.Source, oci bool
 			}
 		}
 
-		desc, _, err := ic.commitDistributionManifest(ctx, r, config, &remotes[remotesMap[p.ID]], oci, inlineCache, dtbi)
+		desc, _, err := ic.commitDistributionManifest(ctx, r, refCfg, config, &remotes[remotesMap[p.ID]], oci, inlineCache, dtbi, session.NewGroup(sessionID))
 		if err != nil {
 			return nil, err
 		}
@@ -212,7 +212,20 @@ func (ic *ImageWriter) exportLayers(ctx context.Context, refCfg cacheconfig.RefC
 	return out, err
 }
 
-func (ic *ImageWriter) commitDistributionManifest(ctx context.Context, ref cache.ImmutableRef, config []byte, remote *solver.Remote, oci bool, inlineCache []byte, buildInfo []byte) (*ocispecs.Descriptor, *ocispecs.Descriptor, error) {
+func appendExtraLayer(ctx context.Context, ref cache.ImmutableRef, refCfg cacheconfig.RefConfig, descs []ocispecs.Descriptor, sg session.Group) ([]ocispecs.Descriptor, error) {
+	if refCfg.Compression.Type == compression.Nydus {
+		// For nydus format, appending an extra nydus bootstrap layer to the manifest,
+		// this layer represents the whole metadata of filesystem view for the entire image.
+		desc, err := cache.MergeNydus(ctx, ref, refCfg.Compression, sg)
+		if err != nil {
+			return nil, errors.Wrap(err, "merge nydus layer")
+		}
+		descs = append(descs, *desc)
+	}
+	return descs, nil
+}
+
+func (ic *ImageWriter) commitDistributionManifest(ctx context.Context, ref cache.ImmutableRef, refCfg cacheconfig.RefConfig, config []byte, remote *solver.Remote, oci bool, inlineCache []byte, buildInfo []byte, sg session.Group) (*ocispecs.Descriptor, *ocispecs.Descriptor, error) {
 	if len(config) == 0 {
 		var err error
 		config, err = emptyImageConfig()
@@ -232,9 +245,14 @@ func (ic *ImageWriter) commitDistributionManifest(ctx context.Context, ref cache
 		return nil, nil, err
 	}
 
-	remote, history = normalizeLayersAndHistory(ctx, remote, history, ref, oci)
+	descs, err := appendExtraLayer(ctx, ref, refCfg, remote.Descriptors, sg)
+	if err != nil {
+		return nil, nil, err
+	}
 
-	config, err = patchImageConfig(config, remote.Descriptors, history, inlineCache, buildInfo)
+	descs, history = normalizeLayersAndHistory(ctx, descs, history, ref, oci)
+
+	config, err = patchImageConfig(config, descs, history, inlineCache, buildInfo)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -275,7 +293,7 @@ func (ic *ImageWriter) commitDistributionManifest(ctx context.Context, ref cache
 		"containerd.io/gc.ref.content.0": configDigest.String(),
 	}
 
-	for i, desc := range remote.Descriptors {
+	for i, desc := range descs {
 		// oci supports annotations but don't export internal annotations
 		if oci {
 			delete(desc.Annotations, "containerd.io/uncompressed")
@@ -434,8 +452,8 @@ func patchImageConfig(dt []byte, descs []ocispecs.Descriptor, history []ocispecs
 	return dt, errors.Wrap(err, "failed to marshal config after patch")
 }
 
-func normalizeLayersAndHistory(ctx context.Context, remote *solver.Remote, history []ocispecs.History, ref cache.ImmutableRef, oci bool) (*solver.Remote, []ocispecs.History) {
-	refMeta := getRefMetadata(ref, len(remote.Descriptors))
+func normalizeLayersAndHistory(ctx context.Context, descs []ocispecs.Descriptor, history []ocispecs.History, ref cache.ImmutableRef, oci bool) ([]ocispecs.Descriptor, []ocispecs.History) {
+	refMeta := getRefMetadata(ref, len(descs))
 
 	var historyLayers int
 	for _, h := range history {
@@ -444,14 +462,14 @@ func normalizeLayersAndHistory(ctx context.Context, remote *solver.Remote, histo
 		}
 	}
 
-	if historyLayers > len(remote.Descriptors) {
+	if historyLayers > len(descs) {
 		// this case shouldn't happen but if it does force set history layers empty
 		// from the bottom
 		bklog.G(ctx).Warn("invalid image config with unaccounted layers")
 		historyCopy := make([]ocispecs.History, 0, len(history))
 		var l int
 		for _, h := range history {
-			if l >= len(remote.Descriptors) {
+			if l >= len(descs) {
 				h.EmptyLayer = true
 			}
 			if !h.EmptyLayer {
@@ -462,7 +480,7 @@ func normalizeLayersAndHistory(ctx context.Context, remote *solver.Remote, histo
 		history = historyCopy
 	}
 
-	if len(remote.Descriptors) > historyLayers {
+	if len(descs) > historyLayers {
 		// some history items are missing. add them based on the ref metadata
 		for _, md := range refMeta[historyLayers:] {
 			history = append(history, ocispecs.History{
@@ -516,9 +534,9 @@ func normalizeLayersAndHistory(ctx context.Context, remote *solver.Remote, histo
 	}
 
 	// convert between oci and docker media types (or vice versa) if needed
-	remote.Descriptors = compression.ConvertAllLayerMediaTypes(oci, remote.Descriptors...)
+	descs = compression.ConvertAllLayerMediaTypes(oci, descs...)
 
-	return remote, history
+	return descs, history
 }
 
 type refMetadata struct {
