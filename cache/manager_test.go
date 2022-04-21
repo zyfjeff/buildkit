@@ -31,6 +31,7 @@ import (
 	"github.com/containerd/containerd/snapshots"
 	"github.com/containerd/containerd/snapshots/native"
 	"github.com/containerd/continuity/fs/fstest"
+	nydusify "github.com/containerd/nydus-snapshotter/pkg/converter"
 	"github.com/containerd/stargz-snapshotter/estargz"
 	"github.com/klauspost/compress/zstd"
 	"github.com/moby/buildkit/cache/config"
@@ -1154,7 +1155,7 @@ func TestLoopLeaseContent(t *testing.T) {
 	defer done(ctx)
 
 	// store an uncompressed blob to the content store
-	compressionLoop := []compression.Type{compression.Uncompressed, compression.Gzip, compression.Zstd, compression.EStargz}
+	compressionLoop := []compression.Type{compression.Uncompressed, compression.Gzip, compression.Zstd, compression.EStargz, compression.Nydus}
 	blobBytes, orgDesc, err := mapToBlob(map[string]string{"foo": "1"}, false)
 	require.NoError(t, err)
 	contentBuffer := contentutil.NewBuffer()
@@ -1506,6 +1507,8 @@ func getCompressor(w io.Writer, compressionType compression.Type, customized boo
 			}
 		}
 		return zstd.NewWriter(w)
+	case compression.Nydus:
+		return nydusify.Convert(context.TODO(), w, nydusify.ConvertOption{})
 	default:
 		return nil, fmt.Errorf("unknown compression type: %q", compressionType)
 	}
@@ -1672,6 +1675,10 @@ func TestGetRemotes(t *testing.T) {
 		zstdDigest, err := zstdBlobDigest(uncompressedBlobBytes)
 		require.NoError(t, err)
 		expectedContent[zstdDigest] = struct{}{}
+
+		nydusDigest, err := nydusBlobDigest(uncompressedBlobBytes)
+		require.NoError(t, err)
+		expectedContent[nydusDigest] = struct{}{}
 	}
 
 	// Create 3 levels of mutable refs, where each parent ref has 2 children (this tests parallel creation of
@@ -1714,6 +1721,10 @@ func TestGetRemotes(t *testing.T) {
 				require.NoError(t, err)
 				expectedContent[zstdDigest] = struct{}{}
 
+				nydusDigest, err := nydusBlobDigest(uncompressedBlobBytes)
+				require.NoError(t, err)
+				expectedContent[nydusDigest] = struct{}{}
+
 				f.Close()
 				err = lm.Unmount()
 				require.NoError(t, err)
@@ -1740,7 +1751,7 @@ func TestGetRemotes(t *testing.T) {
 	eg, egctx := errgroup.WithContext(ctx)
 	for _, ir := range refs {
 		ir := ir.(*immutableRef)
-		for _, compressionType := range []compression.Type{compression.Uncompressed, compression.Gzip, compression.EStargz, compression.Zstd} {
+		for _, compressionType := range []compression.Type{compression.Uncompressed, compression.Gzip, compression.EStargz, compression.Zstd, compression.Nydus} {
 			compressionType := compressionType
 			refCfg := config.RefConfig{Compression: compression.New(compressionType).SetForce(true)}
 			eg.Go(func() error {
@@ -1759,6 +1770,8 @@ func TestGetRemotes(t *testing.T) {
 						require.Equal(t, ocispecs.MediaTypeImageLayerGzip, desc.MediaType)
 					case compression.Zstd:
 						require.Equal(t, ocispecs.MediaTypeImageLayer+"+zstd", desc.MediaType)
+					case compression.Nydus:
+						require.Equal(t, nydusify.MediaTypeNydusBlob, desc.MediaType)
 					default:
 						require.Fail(t, "unhandled media type", compressionType)
 					}
@@ -1829,7 +1842,7 @@ func TestGetRemotes(t *testing.T) {
 		variants, ok := variantsMap[ir.ID()]
 		variantsMapMu.Unlock()
 		require.True(t, ok, ir.ID())
-		for _, compressionType := range []compression.Type{compression.Uncompressed, compression.Gzip, compression.EStargz, compression.Zstd} {
+		for _, compressionType := range []compression.Type{compression.Uncompressed, compression.Gzip, compression.EStargz, compression.Zstd, compression.Nydus} {
 			compressionType := compressionType
 			refCfg := config.RefConfig{Compression: compression.New(compressionType)}
 			eg.Go(func() error {
@@ -1985,6 +1998,15 @@ func checkInfo(ctx context.Context, t *testing.T, cs content.Store, info content
 	if !ok {
 		return
 	}
+
+	desc, err := getBlobDesc(ctx, cs, info.Digest)
+	require.NoError(t, err)
+	if isNydusBlob(desc) {
+		// Nydus compression type hasn't yet implemented decompression,
+		// just skip here.
+		return
+	}
+
 	ra, err := cs.ReaderAt(ctx, ocispecs.Descriptor{Digest: info.Digest})
 	require.NoError(t, err)
 	defer ra.Close()
@@ -2014,6 +2036,12 @@ func checkDescriptor(ctx context.Context, t *testing.T, cs content.Store, desc o
 		var err error
 		uncompressedSize, err = strconv.ParseInt(uncompressedSizeS, 10, 64)
 		require.NoError(t, err)
+	}
+
+	if compressionType == compression.Nydus {
+		// Nydus compression type hasn't yet implemented decompression,
+		// just skip here.
+		return
 	}
 
 	// Check annotation values are valid
@@ -2495,6 +2523,21 @@ func esgzBlobDigest(uncompressedBlobBytes []byte) (blobDigest digest.Digest, err
 		return "", err
 	}
 	return esgzDigester.Digest(), nil
+}
+
+func nydusBlobDigest(uncompressedBlobBytes []byte) (digest.Digest, error) {
+	digester := digest.Canonical.Digester()
+	w, err := nydusify.Convert(context.TODO(), digester.Hash(), nydusify.ConvertOption{})
+	if err != nil {
+		return "", err
+	}
+	if _, err := w.Write(uncompressedBlobBytes); err != nil {
+		return "", err
+	}
+	if err := w.Close(); err != nil {
+		return "", err
+	}
+	return digester.Digest(), nil
 }
 
 func zstdBlobDigest(uncompressedBlobBytes []byte) (digest.Digest, error) {

@@ -13,6 +13,7 @@ ARG ROOTLESSKIT_VERSION=v0.14.6
 ARG CNI_VERSION=v1.1.0
 ARG STARGZ_SNAPSHOTTER_VERSION=v0.11.4
 ARG NERDCTL_VERSION=v0.17.1
+ARG NYDUS_VERSION=v2.0.0-rc.5
 
 # ALPINE_VERSION sets version for the base layers
 ARG ALPINE_VERSION=3.15
@@ -184,6 +185,15 @@ RUN --mount=target=/root/.cache,type=cache \
   xx-verify --static /out/containerd-stargz-grpc && \
   xx-verify --static /out/ctr-remote
 
+FROM gobuild-base AS nydus
+ARG NYDUS_VERSION
+ARG TARGETOS
+ARG TARGETARCH
+SHELL ["/bin/bash", "-c"]
+RUN set -e; [[ "$TARGETOS" == "linux" ]] && [[ "$TARGETARCH" == "amd64" || "$TARGETARCH" == "arm64" ]] || exit 1;
+RUN wget https://github.com/dragonflyoss/image-service/releases/download/$NYDUS_VERSION/nydus-static-$NYDUS_VERSION-$TARGETOS-$TARGETARCH.tgz
+RUN mkdir -p /out && tar xzvf nydus-static-$NYDUS_VERSION-$TARGETOS-$TARGETARCH.tgz -C /out
+
 # Copy together all binaries needed for oci worker mode
 FROM buildkit-export AS buildkit-buildkitd.oci_only
 COPY --link --from=buildkitd.oci_only /usr/bin/buildkitd.oci_only /usr/bin/
@@ -241,6 +251,7 @@ RUN apk add --no-cache shadow shadow-uidmap sudo vim iptables fuse curl \
 ENV BUILDKIT_INTEGRATION_CONTAINERD_EXTRA="containerd-1.4=/opt/containerd-alt-14/bin,containerd-1.5=/opt/containerd-alt-15/bin"
 ENV BUILDKIT_INTEGRATION_SNAPSHOTTER=stargz
 ENV CGO_ENABLED=0
+COPY --link --from=nydus /out/nydus-static/* /usr/bin/
 COPY --link --from=stargz-snapshotter /out/* /usr/bin/
 COPY --link --from=rootlesskit /rootlesskit /usr/bin/
 COPY --link --from=containerd-alt-14 /out/containerd* /opt/containerd-alt-14/bin/
