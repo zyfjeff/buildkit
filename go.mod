@@ -13,7 +13,7 @@ require (
 	github.com/containerd/fuse-overlayfs-snapshotter v1.0.2
 	github.com/containerd/go-cni v1.1.4
 	github.com/containerd/go-runc v1.0.0
-	github.com/containerd/nydus-snapshotter v0.2.0
+	github.com/containerd/nydus-snapshotter v0.2.1
 	github.com/containerd/stargz-snapshotter v0.11.4
 	github.com/containerd/stargz-snapshotter/estargz v0.11.4
 	github.com/containerd/typeurl v1.0.2
