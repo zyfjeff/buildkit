@@ -13,7 +13,7 @@ ARG ROOTLESSKIT_VERSION=v0.14.6
 ARG CNI_VERSION=v1.1.0
 ARG STARGZ_SNAPSHOTTER_VERSION=v0.11.4
 ARG NERDCTL_VERSION=v0.17.1
-ARG NYDUS_VERSION=v2.0.0-rc.2
+ARG NYDUS_VERSION=v2.0.0-rc.4
 
 ARG ALPINE_VERSION=3.15
 
@@ -187,8 +187,12 @@ RUN --mount=target=/root/.cache,type=cache \
 
 FROM gobuild-base AS nydus
 ARG NYDUS_VERSION
-RUN wget https://github.com/dragonflyoss/image-service/releases/download/$NYDUS_VERSION/nydus-static-$NYDUS_VERSION-x86_64.tgz
-RUN mkdir -p /out && tar xzvf nydus-static-$NYDUS_VERSION-x86_64.tgz -C /out
+ARG TARGETOS
+ARG TARGETARCH
+SHELL ["/bin/bash", "-c"]
+RUN set -e; [[ "$TARGETOS" == "linux" ]] && [[ "$TARGETARCH" == "amd64" || "$TARGETARCH" == "arm64" ]] || exit 1;
+RUN wget https://github.com/dragonflyoss/image-service/releases/download/$NYDUS_VERSION/nydus-static-$NYDUS_VERSION-$TARGETOS-$TARGETARCH.tgz
+RUN mkdir -p /out && tar xzvf nydus-static-$NYDUS_VERSION-$TARGETOS-$TARGETARCH.tgz -C /out
 
 # Copy together all binaries needed for oci worker mode
 FROM buildkit-export AS buildkit-buildkitd.oci_only
