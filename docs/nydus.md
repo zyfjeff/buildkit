@@ -8,7 +8,7 @@ Nydus image can be flexibly configured as a FUSE-based user-space filesystem or 
 
 ### Building Nydus with BuildKit
 
-On buildkitd side, download `nydus-image` binary from [nydus release page](https://github.com/dragonflyoss/image-service/releases) (require v2.0.0-rc.5 or higher), then put the `nydus-image` binary path into $PATH or specifying it on `NYDUS_BUILDER` environment variable for buildkitd:
+On buildkitd side, download `nydus-image` binary from [nydus release page](https://github.com/dragonflyoss/image-service/releases) (require v2.1.0-alpha.0 or higher), then put the `nydus-image` binary path into $PATH or specifying it on `NYDUS_BUILDER` environment variable for buildkitd:
 
 ```
 env NYDUS_BUILDER=/path/to/nydus-image buildkitd ...

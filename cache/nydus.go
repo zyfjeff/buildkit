@@ -32,7 +32,9 @@ func isNydusBlob(desc ocispecs.Descriptor) bool {
 // compressNydus compresses a diff tar stream into nydus format (nydus blob + nydus bootstrap).
 func compressNydus(ctx context.Context, comp compression.Config) (compressor, func(context.Context, content.Store) (map[string]string, error)) {
 	return func(dest io.Writer, requiredMediaType string) (io.WriteCloser, error) {
-			return nydusify.Convert(ctx, dest, nydusify.ConvertOption{})
+			return nydusify.Convert(ctx, dest, nydusify.ConvertOption{
+				RafsVersion: "6",
+			})
 		}, func(ctx context.Context, cs content.Store) (map[string]string, error) {
 			annotations := map[string]string{
 				// Use this annotation to identify nydus blob layer.
