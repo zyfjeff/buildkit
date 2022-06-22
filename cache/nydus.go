@@ -20,7 +20,7 @@ import (
 
 var nydusAnnotations = []string{nydusify.LayerAnnotationNydusBlob, nydusify.LayerAnnotationNydusBootstrap, nydusify.LayerAnnotationNydusBlobIDs}
 
-func isNydusBlob(desc ocispecs.Descriptor) bool {
+func IsNydusBlob(desc ocispecs.Descriptor) bool {
 	if desc.Annotations == nil {
 		return false
 	}

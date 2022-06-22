@@ -2001,7 +2001,7 @@ func checkInfo(ctx context.Context, t *testing.T, cs content.Store, info content
 
 	desc, err := getBlobDesc(ctx, cs, info.Digest)
 	require.NoError(t, err)
-	if isNydusBlob(desc) {
+	if IsNydusBlob(desc) {
 		// Nydus compression type hasn't yet implemented decompression,
 		// just skip here.
 		return

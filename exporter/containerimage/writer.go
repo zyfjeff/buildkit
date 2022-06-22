@@ -393,7 +393,7 @@ func parseHistoryFromConfig(dt []byte) ([]ocispecs.History, error) {
 	return config.History, nil
 }
 
-func patchImageConfig(dt []byte, descs []ocispecs.Descriptor, history []ocispecs.History, cache []byte, buildInfo []byte) ([]byte, error) {
+func patchImageConfig(dt []byte, descs []ocispecs.Descriptor, history []ocispecs.History, cacheBytes []byte, buildInfo []byte) ([]byte, error) {
 	m := map[string]json.RawMessage{}
 	if err := json.Unmarshal(dt, &m); err != nil {
 		return nil, errors.Wrap(err, "failed to parse image config for patch")
@@ -402,7 +402,12 @@ func patchImageConfig(dt []byte, descs []ocispecs.Descriptor, history []ocispecs
 	var rootFS ocispecs.RootFS
 	rootFS.Type = "layers"
 	for _, desc := range descs {
-		rootFS.DiffIDs = append(rootFS.DiffIDs, digest.Digest(desc.Annotations["containerd.io/uncompressed"]))
+		if cache.IsNydusBlob(desc) {
+			// For nydus blob layer, use blob digest as diff id.
+			rootFS.DiffIDs = append(rootFS.DiffIDs, desc.Digest)
+		} else {
+			rootFS.DiffIDs = append(rootFS.DiffIDs, digest.Digest(desc.Annotations["containerd.io/uncompressed"]))
+		}
 	}
 	dt, err := json.Marshal(rootFS)
 	if err != nil {
@@ -430,8 +435,8 @@ func patchImageConfig(dt []byte, descs []ocispecs.Descriptor, history []ocispecs
 		m["created"] = dt
 	}
 
-	if cache != nil {
-		dt, err := json.Marshal(cache)
+	if cacheBytes != nil {
+		dt, err := json.Marshal(cacheBytes)
 		if err != nil {
 			return nil, err
 		}

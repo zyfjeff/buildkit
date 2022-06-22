@@ -454,9 +454,9 @@ func isTypeWindows(sr *immutableRef) bool {
 // should do the forced compression.
 func needsForceCompression(source ocispecs.Descriptor, target compression.Type) bool {
 	if target == compression.Nydus {
-		return !isNydusBlob(source)
+		return !IsNydusBlob(source)
 	}
-	return isNydusBlob(source)
+	return IsNydusBlob(source)
 }
 
 // ensureCompression ensures the specified ref has the blob of the specified compression Type.

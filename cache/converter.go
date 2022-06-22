@@ -51,7 +51,7 @@ func needsConversion(ctx context.Context, cs content.Store, desc ocispecs.Descri
 			return false, nil
 		}
 	case compression.Nydus:
-		if !images.IsLayerType(mediaType) || isNydusBlob(desc) {
+		if !images.IsLayerType(mediaType) || IsNydusBlob(desc) {
 			return false, nil
 		}
 	default:
