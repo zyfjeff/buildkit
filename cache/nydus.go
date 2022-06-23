@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 
 	"github.com/containerd/containerd/content"
 	"github.com/containerd/containerd/errdefs"
@@ -20,6 +21,19 @@ import (
 
 var nydusAnnotations = []string{nydusify.LayerAnnotationNydusBlob, nydusify.LayerAnnotationNydusBootstrap, nydusify.LayerAnnotationNydusBlobIDs}
 
+// TODO(tianqian.zyf): Remove it, when nydusify contains this annotation
+const (
+	LayerAnnotationNydusFsVersion = "containerd.io/snapshot/nydus-fs-version"
+)
+
+func GetNydusRafsVersionOrDefault(defaultVersion string) string {
+	v := os.Getenv("NYDUS_FS_VERSION")
+	if len(v) == 0 {
+		return defaultVersion
+	}
+	return v
+}
+
 func isNydusBlob(desc ocispecs.Descriptor) bool {
 	if desc.Annotations == nil {
 		return false
@@ -33,7 +47,7 @@ func isNydusBlob(desc ocispecs.Descriptor) bool {
 func compressNydus(ctx context.Context, comp compression.Config) (compressor, func(context.Context, content.Store) (map[string]string, error)) {
 	return func(dest io.Writer, requiredMediaType string) (io.WriteCloser, error) {
 			return nydusify.Convert(ctx, dest, nydusify.ConvertOption{
-				RafsVersion: "6",
+				RafsVersion: GetNydusRafsVersionOrDefault("5"),
 			})
 		}, func(ctx context.Context, cs content.Store) (map[string]string, error) {
 			annotations := map[string]string{
@@ -140,6 +154,7 @@ func MergeNydus(ctx context.Context, ref ImmutableRef, comp compression.Config, 
 			containerdUncompressed: uncompressedDgst.Digest().String(),
 			// Use this annotation to identify nydus bootstrap layer.
 			nydusify.LayerAnnotationNydusBootstrap: "true",
+			LayerAnnotationNydusFsVersion:          GetNydusRafsVersionOrDefault("5"),
 			// Track all blob digests for nydus snapshotter.
 			nydusify.LayerAnnotationNydusBlobIDs: string(blobIDsBytes),
 		},
